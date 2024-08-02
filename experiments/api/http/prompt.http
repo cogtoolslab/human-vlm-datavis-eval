@@ -1,0 +1,38 @@
+GET http://localhost:3000/api/v1/answers?agent=mini-vlat HTTP/1.1
+
+###
+
+POST http://localhost:3000/api/v1/answer HTTP/1.1
+content-type: application/json
+
+{
+  "question": "Test",
+  "agentType": "mini-vlat",
+  "testType": "a",
+  "correctAnswer": "a",
+  "imageFile": "asd",
+  "imageLink": "asd",
+  "taskCategory": "asd",
+  "multipleChoice": [], 
+  "metadataLink": "asd",
+  "timestamp": 12313
+}
+
+###
+
+POST https://foraes.com/api/v1/answer HTTP/1.1
+content-type: application/json
+
+{
+  "question": "Test",
+  "agentType": "mini-vlat",
+  "testType": "a",
+  "correctAnswer": "a",
+  "imageFile": "asd",
+  "imageLink": "asd",
+  "taskCategory": "asd",
+  "multipleChoice": [], 
+  "metadataLink": "asd",
+  "timestamp": 12313
+}
+

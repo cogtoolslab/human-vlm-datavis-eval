@@ -1,0 +1,11 @@
+body {
+    background-color: #f8f0e3; /* Base color of old paper */
+    background-image:
+        radial-gradient(circle, #f7f4ee 20%, transparent 20%),
+        radial-gradient(circle, #f7f4ee 20%, transparent 20%);
+    background-size: 10px 10px; /* Size of the speckle */
+    background-position: 0 0, 5px 5px; /* Positioning of speckles */
+    font-family: "Optima", sans-serif;
+    font-size: 1.5rem; /* 24px */
+    line-height: 2rem; /* 32px */
+}
