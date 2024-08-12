@@ -7,6 +7,54 @@ import os
 
 AWS_PREFIX = "https://data-visualization-benchmark.s3.us-west-2.amazonaws.com"
 
+def has_incorrect_response(row):
+    r = str(row["agent_response"])
+    answer = str(row["correct_answer"]).lower()
+    response = str(row["agent_response"]).lower()
+    test_type = row["testType"]
+
+    if test_type == "holf":
+        return EvaluationMetrics().get_best_numerical_response(response, answer)
+
+    check1 = (
+        r.find("The model response does not provide") != -1 or
+        r.find("response does not") != -1 or
+        r.find("The extracted answer") != -1 or
+        r.find("The model") != -1 or
+        response.find("error") != -1 or
+        response.find("sorry") != -1 or
+        response.find("does not provide") != -1 or
+        r.find("To provide an accurate answer") != -1 or 
+        r.find("does not include") != -1 or
+        r.find("I need the actual percentages") != -1 or
+        r.find("Unable to extract") != -1 or
+        r.find("model response did not") != -1 or
+        r.find("model response itself is not provided") != -1
+    )
+
+    if response.find(answer) != -1:
+        return answer
+    
+    if check1:
+        return np.nan
+
+    item = questions[
+        (questions["question"] == row["question"]) &
+        (questions["image_file"] == row["image_file"])                
+    ].iloc[0]
+    textInput = item["text_input_type"]
+
+    if textInput == "multiple_choice_question":
+        mc1, mc2, mc3, mc4 = item["mc1"], item["mc2"], item["mc3"], item["mc4"]
+
+        for mc in [mc4,mc3,mc2,mc1]:
+            if mc != np.nan and response.find(str(mc).lower().strip()) != -1:
+                return mc
+    
+        return np.nan
+    elif textInput == "open_ended_question" and test_type == "ggr":
+        return EvaluationMetrics().get_best_numerical_response(response, answer)
+
 def process_extracted_responses(model_sets):
     models = [model[0] for model in model_sets]
     prompt_type = 'indist_instructions_question'
@@ -16,7 +64,8 @@ def process_extracted_responses(model_sets):
     test_types = [
         "ggr",
         "vlat",
-        "holf"
+        "holf",
+        ""
     ]
     
 
@@ -38,53 +87,6 @@ def process_extracted_responses(model_sets):
 
     questions = pd.concat(questions)
 
-    def has_incorrect_response(row):
-        r = str(row["agent_response"])
-        answer = str(row["correct_answer"]).lower()
-        response = str(row["agent_response"]).lower()
-        test_type = row["testType"]
-
-        if test_type == "holf":
-            return EvaluationMetrics().get_best_numerical_response(response, answer)
-
-        check1 = (
-            r.find("The model response does not provide") != -1 or
-            r.find("response does not") != -1 or
-            r.find("The extracted answer") != -1 or
-            r.find("The model") != -1 or
-            response.find("error") != -1 or
-            response.find("sorry") != -1 or
-            response.find("does not provide") != -1 or
-            r.find("To provide an accurate answer") != -1 or 
-            r.find("does not include") != -1 or
-            r.find("I need the actual percentages") != -1 or
-            r.find("Unable to extract") != -1 or
-            r.find("model response did not") != -1 or
-            r.find("model response itself is not provided") != -1
-        )
-
-        if response.find(answer) != -1:
-            return answer
-        
-        if check1:
-            return np.nan
-
-        item = questions[
-            (questions["question"] == row["question"]) &
-            (questions["image_file"] == row["image_file"])                
-        ].iloc[0]
-        textInput = item["text_input_type"]
-
-        if textInput == "multiple_choice_question":
-            mc1, mc2, mc3, mc4 = item["mc1"], item["mc2"], item["mc3"], item["mc4"]
-
-            for mc in [mc4,mc3,mc2,mc1]:
-                if mc != np.nan and response.find(str(mc).lower().strip()) != -1:
-                    return mc
-        
-            return np.nan
-        elif textInput == "open_ended_question" and test_type == "ggr":
-            return EvaluationMetrics().get_best_numerical_response(response, answer)
 
     model_responses["agent_response"] = model_responses.apply(has_incorrect_response, axis=1)
 
