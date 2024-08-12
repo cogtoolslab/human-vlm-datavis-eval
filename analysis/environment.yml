@@ -1,0 +1,14 @@
+name: vlm-datavis-bench
+channels:
+  - pytorch
+  - conda-forge
+  - defaults
+  - nvidia
+dependencies:
+  - numpy
+  - pandas
+  - python=3.12
+  - altair
+  - requests
+  - sentence-transformers
+  - ipykernel
