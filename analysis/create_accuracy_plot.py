@@ -2,6 +2,7 @@ import altair as alt
 import pandas as pd
 import numpy as np
 from joblib import Parallel, delayed
+from utils import read_model_configs
 from numpy.random import Generator, PCG64
 alt.renderers.enable("mimetype")
 alt.data_transformers.disable_max_rows()
@@ -15,59 +16,101 @@ class AccuracyPlot:
         testName, 
         prompt_type, 
         units_of_measure = 'a_in_b', 
-        top_p_dir='p04', 
-        temperature_dir='t1', 
-        model_config=[],
+        model_configs=[],
         print_stats=False,
-        relax_value = 0.10
+        relax_value = 0.10,
+        response_file='processed_extracted_responses'
     ):
+        self.model_configs = model_configs
         self.test_name = testName
         self.AWS_PREFIX = "https://data-visualization-benchmark.s3.us-west-2.amazonaws.com"
         self.questions = pd.read_csv(f'{self.AWS_PREFIX}/{testName}/questions.csv')
-        self.top_p_dir = top_p_dir
-        self.temperature_dir = temperature_dir
+
+        if self.test_name == "calvi-trick": # read all questions, not just calvi trick
+            calvi_standard_questions = pd.read_csv(f'{self.AWS_PREFIX}/calvi-standard/questions.csv')
+            self.questions = pd.concat([self.questions, calvi_standard_questions])
+        
         self.evaluation_metric = EvaluationMetrics()
         self.units_of_measure = units_of_measure
-        _dir = f'responses/{prompt_type}/{top_p_dir}/{temperature_dir}'
-        raw_model_response_url =  f'{self.AWS_PREFIX}/{testName}/responses/{prompt_type}/{top_p_dir}/{temperature_dir}/model_responses.csv'
-        model_response_url = f'https://data-visualization-benchmark.s3.us-west-2.amazonaws.com/{testName}/{_dir}/processed_extracted_responses.csv'
+
+        self.model_responses = []
+        for model_config in model_configs:
+            top_p_dir = model_config['top_p']
+            temperature_dir = model_config['temp']
+            model = model_config['model'].replace("/", "-")
+
+            _dir = f'responses/{prompt_type}/{top_p_dir}/{temperature_dir}'
+            model_response_url = f'https://data-visualization-benchmark.s3.us-west-2.amazonaws.com/{testName}/{_dir}/{model}/{response_file}.csv'
         
-        print(model_response_url)
-        self.model_responses = pd.read_csv(model_response_url)
-        self.model_responses = self.model_responses[self.model_responses["testType"] == self.test_name]
-        self.model_responses = self.model_responses.rename({
-            "imageFile": "image_file"
-        }, axis=1).dropna(subset=["agent_response"])
+            print(model_response_url)
+            model_response = pd.read_csv(model_response_url, low_memory=False)
+            
+            
+            # combine calvi-trick to be a part of calvi-standard
+            if self.test_name == "calvi-trick":
+                def get_calvi_standard():
+                    testName = "calvi-standard"
+                    model_response_url = f'https://data-visualization-benchmark.s3.us-west-2.amazonaws.com/{testName}/{_dir}/{model}/{response_file}.csv'
+                    model_response = pd.read_csv(model_response_url)
+                    # model_response['testType'] = model_response['test_type']
+                    model_response['testType'] = model_response['testType'].replace("calvi-standard", "calvi-trick")
+                    return model_response
+                calvi_standard_df = get_calvi_standard()
+                calvi_df = pd.concat([calvi_standard_df, model_response]).reset_index(drop=True)
+                self.model_responses.append(calvi_df)
+            else:
+                self.model_responses.append(model_response)
 
-        self.human_responses = pd.read_csv(raw_model_response_url)
-        self.human_responses = self.human_responses[(self.human_responses["agentType"] == "Human/Math-2-1") | 
-                                                    (self.human_responses["agentType"] == "Human/Math-3") | 
-                                                    (self.human_responses["agentType"] == "Human")]
-
-        self.model_responses = pd.concat([self.model_responses, self.human_responses])
-        self.model_responses["correct_answer"] = self.model_responses["correctAnswer"]
+        self.model_responses = pd.concat(self.model_responses).reset_index(drop=True)
         
-        self.is_numerical_test = self.test_name in ["chartqa-test-continuous", "holf", "holf2"]
 
-        self.model_responses["agent_response"] = self.model_responses.apply(
-            lambda r : self.evaluation_metric.remove_prompt(r["agent_response"], r["prompt"]),
-            axis=1
-        )
+
+        if self.test_name != "calvi-trick":
+            self.model_responses = self.model_responses[self.model_responses["testType"] == self.test_name]
+        
+        if 'image_file' not in self.model_responses.columns:
+            self.model_responses = self.model_responses.rename({
+                "imageFile": "image_file"
+            }, axis=1)
+        if 'agentType' not in self.model_responses:
+            self.model_responses = self.model_responses.rename({
+                    "agent_type": "agentType"
+                }, axis=1)
+
+        self.model_responses = self.model_responses.drop(['correct_answer'], axis=1)
+        # TODO: check if all questions csv have text input types
+        self.model_responses = self.model_responses.merge(self.questions[['image_file','question','correct_answer']])
+        self.model_responses = self.model_responses.dropna(subset=["agent_response"])
 
         if print_stats:
-            for agent in model_config:
-                agent_type = agent[0]
+            for model_config in model_configs:
+                agent_type = model_config['model']
                 agent_responses = self.model_responses[self.model_responses["agentType"] == agent_type]
                 print(f"Agent {agent_type} only responded to {len(agent_responses) / len(self.questions)} questions for test {self.test_name}")
 
         if self.units_of_measure == "a_in_b":
+            process_answer = lambda a : str(a).lower().strip()
+            def check_answer(r):
+                if (r['testType'] in ['ggr', 'vlat']) and r['agentType'] == 'Human':
+                    return int(r['is_correct'])
 
+
+                is_correct = process_answer(r['correct_answer']) == process_answer(r['agent_response'])
+                is_correct_2 = False
+                is_correct_3 = False
+                try:
+                    is_correct_2 = process_answer(r['correct_answer_2']) == process_answer(r['agent_response'])
+                    is_correct_3 = process_answer(r['correct_answer_3']) == process_answer(r['agent_response'])
+                except:
+                    pass
+
+                return int(is_correct or is_correct_2 or is_correct_3)
+                
             self.model_responses["a_in_b"] = self.model_responses.apply(
-                lambda r: self.evaluation_metric.a_in_b(r['correct_answer'], r['agent_response']), axis=1
+                check_answer, axis=1
             )
 
         if self.units_of_measure == "minmax_axis_normalized_error":
-
             self.model_responses["agent_response"] = self.model_responses["agent_response"].astype(float)
 
             if relax_value > 0:
@@ -79,30 +122,32 @@ class AccuracyPlot:
 
                 self.model_responses = self.model_responses[self.model_responses.apply(filter_outliers, axis=1)]
 
-            self.model_responses["error"] = self.model_responses.apply(
-                lambda r: self.evaluation_metric.get_absolute_error(r['agent_response'], r['correct_answer']), axis=1
-            )
-            self.model_responses = self.model_responses.dropna(subset=["error"])
-
             merged_response = self.questions[["question", "image_file", "min_label", "max_label"]]
             self.model_responses = self.model_responses.merge(merged_response, on=["question", "image_file"])
-            
+            self.model_responses["agent_response"] = self.model_responses.apply(
+                lambda r: self.evaluation_metric.minmax_normalized_error(r['agent_response'], r['min_label'], r['max_label']), axis=1
+            )
+            self.model_responses["correct_answer"] = self.model_responses.apply(
+                lambda r: self.evaluation_metric.minmax_normalized_error(r['correct_answer'], r['min_label'], r['max_label']), axis=1
+            )
             self.model_responses[self.units_of_measure] = self.model_responses.apply(
-                lambda r: self.evaluation_metric.minmax_normalized_error(r['error'], r['min_label'], r['max_label']), axis=1
+                lambda r: self.evaluation_metric.get_absolute_error(r['agent_response'], r['correct_answer']), axis=1
             )
 
             self.model_responses = self.model_responses.dropna(subset=["minmax_axis_normalized_error"])
         
-        self.model_config = model_config
+        df_dir = "./single_accuracy_plots"
+        if not os.path.exists(df_dir):
+            os.makedirs(df_dir)
 
-        self.human_responses = None
-        
+        self.model_responses.to_csv(f"{df_dir}/{self.test_name}_used_df.csv")
 
     def bootstrap_ci(
             self, 
             raw_data, 
             n_iterations=10000,
-            statistic=np.mean):
+            statistic=np.mean,
+            agent=None):
         data = raw_data.copy()
         data["question_image"] = data["question"] + " & " + data["image_file"]
         rng = Generator(PCG64())
@@ -110,16 +155,25 @@ class AccuracyPlot:
         n_size = len(questions)
         df = data.copy()
 
-        # sample within the data
-        df = df.sample(frac=1, replace=True, random_state=1)
-
         def bootstrap_iteration(data, chosen_qs):
             filter_df = data[data["question_image"].isin(chosen_qs)] # Filter based on chosen questions
-            bs_mean = statistic(filter_df[self.units_of_measure]) #.mean() # Calculate mean of the filtered data
-            return bs_mean
-        means = Parallel(n_jobs=-1)(
-            delayed(bootstrap_iteration)(df, rng.choice(questions, n_size,  replace=True)) for _ in range(n_iterations)
+            bs_mean = statistic(filter_df[self.units_of_measure]) 
+            return (bs_mean, list(chosen_qs))
+
+        qset_means = Parallel(n_jobs=-1)(
+            delayed(bootstrap_iteration)(
+                # df.sample(frac=1, replace=True, random_state=1),
+                df.copy(),
+                rng.choice(questions, n_size,  replace=True)
+            ) for _ in range(n_iterations)
         )
+        
+        means = []
+        qs_used = []
+        means = [bs_mean for bs_mean, chosen_qs in qset_means]
+
+        if agent:
+            pd.DataFrame({"means": [qset_means], "qs_used": [qs_used], "agent": agent}).to_csv(f"./single_accuracy_plots/{self.test_name}_{agent.replace("/", "_").replace(".", "_")}.csv")
         
         # 95% confidence interval
         lower = np.percentile(means, 2.5)
@@ -135,7 +189,7 @@ class AccuracyPlot:
         for agent in data["agentType"].unique():
             agent_res = data[data["agentType"] == agent]
 
-            lower, upper = self.bootstrap_ci(agent_res, statistic=statistic)
+            lower, upper = self.bootstrap_ci(agent_res, statistic=statistic, agent=agent)
 
             data_list.append({
                 "agentType": agent,
@@ -147,15 +201,16 @@ class AccuracyPlot:
 
         return pd.DataFrame(data_list)
 
-    def create_accuracy_df(self, data):
-        acc_df = data.groupby(["question", "image_file", "agentType"])[self.units_of_measure].mean()
+    def create_accuracy_df(self, data, statistic):
+        if statistic == np.mean:
+            acc_df = data.groupby(["question", "image_file", "agentType"])[self.units_of_measure].mean()
+        else:
+            acc_df = data.groupby(["question", "image_file", "agentType"])[self.units_of_measure].median()
         return acc_df.reset_index()
     
     def create_error_scatter_plot(self):
         model_order = [c[0] for c in self.model_config]
         color_order = [c[1] for c in self.model_config]
-
-        
 
         if self.units_of_measure == "absolute_error":
             self.model_responses = self.model_responses[self.model_responses['absolute_error'] <= 1000000]
@@ -189,23 +244,24 @@ class AccuracyPlot:
             test (str): name of the test
         """
         # response_type = unit_of_measurement #if unit_of_measurement == "Proportion Correct" else "err"
-        accuracy_df = self.create_accuracy_df(self.model_responses)
+        accuracy_df = self.create_accuracy_df(self.model_responses, statistic=statistic)
 
         ytitle = self.units_of_measure if not hide_y_title else None
-        model_order = [c[0] for c in self.model_config]
-        main_color_order = [c[1] for c in self.model_config]
-        bg_color_order = [c[2] for c in self.model_config]
+        model_order = [c['model'] for c in self.model_configs]
+        main_color_order = [c['color'] for c in self.model_configs]
+        bg_color_order = [c['accent_color'] for c in self.model_configs]
         
 
         if render_ci:
-            try:
-                ci_df = pd.read_csv(f'./ci_df/{self.test_name}.csv')
-            except:
-                ci_df = self.create_confidence_interval_df(self.model_responses, statistic=statistic)
-                _dir = "../results/dataframe/accuracy_ci_df"
-                if not os.path.exists(_dir):
-                    os.makedirs(_dir)
-                ci_df.to_csv(f'{_dir}/{self.test_name}.csv')
+            # try:
+            #     ci_df = pd.read_csv(f'./ci_df/{self.test_name}.csv')
+            # except:
+            ci_df = self.create_confidence_interval_df(self.model_responses, statistic=statistic)
+            ci_df_dir = "./ci_df"
+            if not os.path.exists(ci_df_dir):
+                os.mkdir(ci_df_dir)
+
+            ci_df.to_csv(f'{ci_df_dir}/{self.test_name}.csv')
 
             error_bars = alt.Chart(ci_df).mark_errorbar().encode(
                 x=alt.X("agentType:N"),
@@ -245,18 +301,18 @@ class AccuracyPlot:
             y_domain = [0, 1]
         elif self.units_of_measure == "minmax_axis_normalized_error":
             max_point = ci_df["ci_upper"].max()
-            max_point = 1.2 if max_point < 1.2 else max_point
+            max_point = 1.4 if max_point < 1.4 else max_point
 
             accuracy_df = accuracy_df[accuracy_df[self.units_of_measure] <= max_point]
             y_domain = [0, max_point]
             # y_domain = [0, accuracy_df[self.units_of_measure].max()+1]
         
-        _dir = "../results/dataframe/accuracy_scatter_df"
-        if not os.path.exists(_dir):
-            os.makedirs(_dir)
-        accuracy_df.to_csv(f'{_dir}/{self.test_name}.csv')
-        
-        scatter_plot = alt.Chart(accuracy_df, title=self.test_name).mark_circle(size=8,).encode(
+        if self.units_of_measure == "minmax_axis_normalized_error":
+            opacity = 0.5
+        else:
+            opacity = 1
+
+        scatter_plot = alt.Chart(accuracy_df, title=self.test_name).mark_circle(size=8,opacity=opacity).encode(
             y=alt.Y(f"{self.units_of_measure}:Q", title=ytitle, scale=alt.Scale(domain=y_domain)),
             x=alt.X("agentType:N", scale=alt.Scale(domain=model_order), title=None),
             xOffset="jitter:Q",
@@ -265,6 +321,19 @@ class AccuracyPlot:
             jitter="sqrt(-2*log(random()))*cos(2*PI*random())" 
         )
 
+        # else:
+        #     ci_df = model_ci_df
+        #     # scatter_plot = None
+        #     accuracy_df = self.create_accuracy_df(self.model_responses, metric=self.units_of_measure)
+        #     scatter_plot = alt.Chart(accuracy_df, title=self.test_name).mark_circle(size=8, opacity=0.7).encode(
+        #         y=alt.Y(f"{self.units_of_measure}:Q", title=ytitle),
+        #         x=alt.X("agentType:N", scale=alt.Scale(domain=model_order), title=None),
+        #         xOffset="jitter:Q",
+        #         color=alt.Color('agentType:N', scale=alt.Scale(domain=model_order, range=bg_color_order)).legend(None),
+        #         ).transform_calculate(
+        #             jitter="sqrt(-2*log(random()))*cos(2*PI*random())" 
+        #     )
+
         final_plot = scatter_plot
         
         if render_ci:
@@ -272,58 +341,45 @@ class AccuracyPlot:
         
         return final_plot.resolve_scale(color="independent",  opacity="independent")
 
-
-def create_single_model_comparison_plots(prompt_type="indist_instructions_question", temperature_dir='t1', top_p_dir='p04'):
+def create_single_model_comparison_plots(contrast_dict=None):
     test_types = [
         "ggr",
-        "vlat", 
-        "holf",
+        # "vlat",
+        # 'calvi-trick',
+        # "holf",
+        # 'calvi-standard',
+        # 'holf2',
+        # 'chartqa-test-continuous-human'
     ]
-    model_sets = [
-        ('llava-hf/llava-1.5-7b-hf', '#f58518', '#f9b574'),
-        ('Salesforce/blip2-flan-t5-xl', '#5ba3cf', '#8CBEDD'),
-        ('Salesforce/blip2-flan-t5-xxl', '#4c78a8', '#6F93B9'),
-        ('GPT-4V', '#b85536', '#CD8872'),
-        ('Human/Math-2-1', "#639460", "#C8EBC6"),
-        ('Human/Math-3', "#2e693b", "#73D287"),
-    ]
-    test_plots = []
-    for test_type in test_types:
-        relax_value = 0.00
 
+    model_configs = read_model_configs()
+    prompt_type = "indist_instructions_question"
+
+    for test_type in test_types:
+        numerical_tests = ["holf", "holf2", 'chartqa-test-continuous', 'chartqa-test-continuous-human']
+        relax_value = 0.00
         accuracy_plot = AccuracyPlot(
             test_type, 
-            prompt_type, 
-            top_p_dir=top_p_dir, 
-            temperature_dir=temperature_dir,
-            model_config=model_sets,
-            units_of_measure='minmax_axis_normalized_error' if test_type in ["holf", "holf2"] else 'a_in_b',
+            prompt_type,
+            model_configs=model_configs,
+            units_of_measure='minmax_axis_normalized_error' if test_type in numerical_tests else 'a_in_b',
             print_stats=True,
             relax_value=relax_value
         )
                     
         plot = accuracy_plot.create_error_plot(
             render_ci=True,
-            statistic=np.median if test_type in ["holf", "holf2"] else np.mean
+            statistic=np.median if test_type in numerical_tests else np.mean
         ).properties(title=f"{test_type}", height=300, width=125)
-        # _dir = f'./single_accuracy_plots/{prompt_type}/{test_type}/{top_p_dir}/{temperature_dir}'
-        _dir = f'../results/figures/accuracy_plots'
+        _dir = f'./single_accuracy_plots/{prompt_type}/{test_type}'
         if not os.path.exists(_dir):
             os.makedirs(_dir)
 
-        # file_name = f"{_dir}/accuracy_plot_med_p00-3.pdf"
-        file_name = f"{_dir}/accuracy_plot_{prompt_type}-{test_type}-{top_p_dir}-{temperature_dir}.pdf"
-
+        file_name = f"{_dir}/accuracy_plot_med_p00-3.pdf"
         plot.save(file_name)
-        # test_plots.append(plot)
 
         print(f"Saving plot to {file_name}")
-    # test_plots = alt.vconcat(*test_plots).resolve_scale(
-    #     x='shared'
-    # ).configure_axis(
-    #     labels=False
-    # )
+
 
 if __name__ == "__main__":
-
     create_single_model_comparison_plots()

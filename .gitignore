@@ -1,3 +1,7 @@
+*.csv
+*.pdf
+
+
 ## ignoring by default
 .DS_Store
 .ipynb_checkpoints/

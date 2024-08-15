@@ -138,8 +138,3 @@ def non_empty_response_bar():
 
 if __name__ == '__main__':
     non_empty_response_bar()
-        
-    
-    
-    
-
