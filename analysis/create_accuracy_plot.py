@@ -279,13 +279,14 @@ class AccuracyPlot:
             ).encode(
                 y=alt.Y("mean:Q",),
                 x=alt.X("agentType:N", scale=alt.Scale(domain=model_order), title=None),
-                color=alt.Color(
-                    'agentType:N', 
-                    scale=alt.Scale(
-                        domain=model_order, 
-                        range=main_color_order
-                    )
-                ).legend(None),
+                color=alt.value("white")
+                # color=alt.Color(
+                #     'agentType:N', 
+                #     scale=alt.Scale(
+                #         domain=model_order, 
+                #         range=main_color_order
+                #     )
+                # ).legend(None),
             )
 
         if max_point and render_ci:
