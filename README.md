@@ -1,6 +1,8 @@
 # CHART-6: Human-Centered Evaluation of Data Visualization Understanding in Vision-Language Models
 
-This repository contains code to reproduce the results in our XXXX paper, CHART-6: Human-Centered Evaluation of Data Visualization Understanding in Vision-Language Models
+This repository contains code to reproduce the results in our XXXX paper, CHART-6: Human-Centered Evaluation of Data Visualization Understanding in Vision-Language Models.
+
+To reproduce the results in the CogSci 2024 version of this project: [*Evaluating human and machine understanding of data visualizations*](/paper/vlm_datavis_benchmark_corrected_cogsci2024.pdf), please visit https://github.com/cogtoolslab/human-machine-datavis-cogsci/tree/master.
 
 Directory Structure
 
@@ -37,7 +39,7 @@ Each folder contains a README.md file that elaborates further on its contents. B
 
 `stimuli` contains the test items and instructions given to humans and machines.
 
-BibTeX Citation:
+BibTeX Citation for CogSci 2024 paper:
 ```
 @inproceedings{verma2024evaluating,
   title={Evaluating human and machine understanding of data visualizations},
