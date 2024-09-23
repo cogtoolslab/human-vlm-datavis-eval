@@ -1,6 +1,5 @@
 import pandas as pd
 
-
 def read_model_configs():
     """Reads models with color scheme and hyperparameter values
     """
@@ -16,6 +15,61 @@ def read_model_configs():
         {'model': "Human", 'top_p': 'pna', 'temp': 'tna', 'color': '#2e693b', 'accent_color': '#73D287'},
     ]
     return model_configs
+
+def get_all_test_types():
+    return ['ggr', 'vlat', 'holf', 'calvi-trick', 'holf2', 'chartqa-test-continuous']
+
+def find_correct_mc(model_responses_raw):
+    model_responses = model_responses_raw.copy()
+
+    process_answer = lambda a : str(a).lower().strip()
+    def check_answer(r):
+        if (r['test_type'] in ['ggr', 'vlat']) and r['agent_type'] == 'Human':
+            return int(r['is_correct'])
+
+        is_correct = process_answer(r['correct_answer']) == process_answer(r['agent_response'])
+        is_correct_2 = False
+        is_correct_3 = False
+        try:
+            is_correct_2 = process_answer(r['correct_answer_2']) == process_answer(r['agent_response'])
+            is_correct_3 = process_answer(r['correct_answer_3']) == process_answer(r['agent_response'])
+        except:
+            pass
+
+        return int(is_correct or is_correct_2 or is_correct_3)
+        
+    model_responses["is_correct"] = model_responses.apply(
+        check_answer, axis=1
+    )
+
+    return model_responses
+
+def minmax_normalized_error(response_error, group_min, group_max):
+        """Calculate the error rate between the response and the correct answer."""
+        return (response_error - group_min) / (group_max - group_min)
+
+def get_absolute_error(numerical_answer : float, correct_numerical_answer : float):
+    return abs(numerical_answer - correct_numerical_answer) 
+
+def find_min_max_scaled_error(model_responses_raw, test_name, units_of_measure):
+    model_responses = model_responses_raw.copy()
+    model_responses["agent_response"] = model_responses["agent_response"].astype(float)
+    AWS_PREFIX = "https://data-visualization-benchmark.s3.us-west-2.amazonaws.com"
+    questions = pd.read_csv(f'{AWS_PREFIX}/{test_name}/questions.csv')
+
+    merged_response = questions[["question", "image_file", "min_label", "max_label"]]
+    model_responses = model_responses.merge(merged_response, on=["question", "image_file"])
+    model_responses["agent_response"] = model_responses.apply(
+        lambda r: minmax_normalized_error(r['agent_response'], r['min_label'], r['max_label']), axis=1
+    )
+    model_responses["correct_answer"] = model_responses.apply(
+        lambda r: minmax_normalized_error(r['correct_answer'], r['min_label'], r['max_label']), axis=1
+    )
+    model_responses[units_of_measure] = model_responses.apply(
+        lambda r: get_absolute_error(r['agent_response'], r['correct_answer']), axis=1
+    )
+    model_responses = model_responses.dropna(subset=[units_of_measure])
+    return model_responses
 
 
 def create_all_agent_response_dataframe(
@@ -61,29 +115,35 @@ def create_all_agent_response_dataframe(
 
         model_response_url = f'https://data-visualization-benchmark.s3.us-west-2.amazonaws.com/{test_type}/{_dir}/{model}/{current_response_file}.csv'
         model_response = pd.read_csv(model_response_url, low_memory=False)
+        if model == "Human":
+            pass
         if "image_file" not in model_response.columns:
-            model_response.rename(columns={
+            model_response = model_response.rename(columns={
                 "imageFile": "image_file",
             })
 
         if "agent_type" not in model_response.columns:
-            model_response.rename(columns={
+            model_response = model_response.rename(columns={
                 "agentType": "agent_type",
             })
 
         if "test_type" not in model_response.columns:
-            model_response.rename(columns={
+            model_response = model_response.rename(columns={
                 "testType": "test_type",
             })
-            
-        
 
         model_responses.append(model_response)
 
+    if model == "Human":
+        pass
     model_responses = pd.concat(model_responses).reset_index(drop=True)
+    model_responses = model_responses.drop(['correct_answer'], axis=1)
     model_responses = model_responses.merge(questions[['image_file','question','correct_answer']])
     if dropna:
         model_responses = model_responses.dropna(subset=["agent_response"])
+
+    if model == "Human":
+        pass
 
     if print_stats:
         print(model_response_url)
@@ -101,6 +161,9 @@ def create_all_agent_response_dataframe(
     return model_responses[cols]
 
 def prepare_original_raw_response_dataframe(test_type):
+    """
+    Prepare dataframe for raw responses
+    """
     model_configs = read_model_configs()
     model_responses = create_all_agent_response_dataframe(
         test_name=test_type, 
@@ -109,6 +172,51 @@ def prepare_original_raw_response_dataframe(test_type):
         response_file="raw_model_responses"
     )
     model_responses = model_responses.sort_values(by=['question', 'image_file'])
+    return model_responses
+
+def prepare_dataframe(test_type):
+    model_configs = read_model_configs()
+    model_responses = create_all_agent_response_dataframe(
+        test_name=test_type, 
+        model_configs=model_configs,
+        print_stats=False
+    )
+
+    if test_type in ['ggr', 'vlat', 'calvi-trick', 'calvi-standard']:
+        model_responses = find_correct_mc(model_responses_raw=model_responses)
+        model_responses = model_responses.groupby(['agent_type', 'question', 'image_file',])['is_correct'].mean().reset_index()
+    else:
+        model_responses = find_min_max_scaled_error(
+            model_responses_raw=model_responses, 
+            test_name=test_type,
+            units_of_measure="is_correct"
+        )
+        model_responses = model_responses.dropna(subset=['is_correct'])
+        model_responses = model_responses.groupby(['agent_type', 'question', 'image_file',])['is_correct'].median().reset_index()
+    
+    model_responses = model_responses.sort_values(by=['question', 'image_file'])
+
+    return model_responses
+
+def prepare_response_dataframe(test_type):
+    model_configs = read_model_configs()
+    model_responses = create_all_agent_response_dataframe(
+        test_name=test_type, 
+        model_configs=model_configs,
+        print_stats=False
+    )
+
+    if test_type in ['ggr', 'vlat', 'calvi-trick', 'calvi-standard']:
+        model_responses = find_correct_mc(model_responses_raw=model_responses)
+    else:
+        model_responses = find_min_max_scaled_error(
+            model_responses_raw=model_responses, 
+            test_name=test_type,
+            units_of_measure="is_correct"
+        )
+        model_responses = model_responses.dropna(subset=['is_correct'])
+    
+    model_responses = model_responses.sort_values(by=['question', 'image_file'])
 
     return model_responses
 
@@ -116,14 +224,20 @@ def prepare_original_raw_response_dataframe(test_type):
 if __name__ == "__main__":
     all_raw_responses_df = []
     # test_types = ['chartqa-test-continuous-human',  'ggr', 'vlat', 'holf', 'calvi-trick', 'holf2'] #'chartqa-test-continuous-human', 
-    test_types = ['chartqa-test-continuous-human',]
-    for test_type in test_types:
-        print(test_type)
-        model_response = prepare_original_raw_response_dataframe(test_type)
-        model_response['test_type'] = test_type
-        all_raw_responses_df.append(model_response)
+    # test_types = ['chartqa-test-continuous-human',]
+    # for test_type in test_types:
+    #     print(test_type)
+    #     model_response = prepare_original_raw_response_dataframe(test_type)
+    #     model_response['test_type'] = test_type
+    #     all_raw_responses_df.append(model_response)
 
-    all_raw_responses_df = pd.concat(all_raw_responses_df)
-    raw_responses_df = all_raw_responses_df[
-        ['question', 'image_file', 'agent_type', 'test_type', 'agent_response']
-    ].value_counts().reset_index()
+    # all_raw_responses_df = pd.concat(all_raw_responses_df)
+    # raw_responses_df = all_raw_responses_df[
+    #     ['question', 'image_file', 'agent_type', 'test_type', 'agent_response']
+    # ].value_counts().reset_index()
+
+    model_responses = []
+    for test_type in ['vlat', 'calvi-trick', 'calvi-standard', 'ggr']:
+        model_response = prepare_dataframe(test_type)
+        model_response['test_type'] = test_type
+        model_responses.append(model_response)

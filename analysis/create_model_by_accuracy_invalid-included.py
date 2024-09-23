@@ -2,7 +2,6 @@ import altair as alt
 import pandas as pd
 import numpy as np
 from joblib import Parallel, delayed
-from utils import read_model_configs
 from numpy.random import Generator, PCG64
 alt.renderers.enable("mimetype")
 alt.data_transformers.disable_max_rows()
@@ -64,7 +63,6 @@ class AccuracyPlot:
         self.model_responses = pd.concat(self.model_responses).reset_index(drop=True)
         
 
-
         if self.test_name != "calvi-trick":
             self.model_responses = self.model_responses[self.model_responses["testType"] == self.test_name]
         
@@ -80,7 +78,10 @@ class AccuracyPlot:
         self.model_responses = self.model_responses.drop(['correct_answer'], axis=1)
         # TODO: check if all questions csv have text input types
         self.model_responses = self.model_responses.merge(self.questions[['image_file','question','correct_answer']])
-        self.model_responses = self.model_responses.dropna(subset=["agent_response"])
+        self.model_responses['group_includes'] = 'all'
+        model_responses_valid = self.model_responses.dropna(subset=["agent_response"]).copy()
+        model_responses_valid['group_includes'] = 'valid'
+        self.model_responses = pd.concat([self.model_responses, model_responses_valid])
 
         if print_stats:
             for model_config in model_configs:
@@ -110,7 +111,16 @@ class AccuracyPlot:
                 check_answer, axis=1
             )
 
+            # self.model_responses["a_in_b"] = self.model_responses.apply(
+            #     lambda r: self.evaluation_metric.a_in_b(r['agent_response'], r['correct_answer']), axis=1
+            # )
+
+
         if self.units_of_measure == "minmax_axis_normalized_error":
+            # self.model_responses["agent_response"] = self.model_responses.apply(
+            #     lambda r : self.evaluation_metric.get_best_numerical_response(r["agent_response"], r["correct_answer"]),
+            #     axis=1
+            # ).dropna()
             self.model_responses["agent_response"] = self.model_responses["agent_response"].astype(float)
 
             if relax_value > 0:
@@ -121,6 +131,13 @@ class AccuracyPlot:
                     return (row['agent_response'] <= top_quantile) and (row['agent_response'] >= bottom_quantile)
 
                 self.model_responses = self.model_responses[self.model_responses.apply(filter_outliers, axis=1)]
+
+            
+
+            # self.model_responses["error"] = self.model_responses.apply(
+            #     lambda r: self.evaluation_metric.get_absolute_error(r['agent_response'], r['correct_answer']), axis=1
+            # )
+            # self.model_responses = self.model_responses.dropna(subset=["error"])
 
             merged_response = self.questions[["question", "image_file", "min_label", "max_label"]]
             self.model_responses = self.model_responses.merge(merged_response, on=["question", "image_file"])
@@ -133,19 +150,22 @@ class AccuracyPlot:
             self.model_responses[self.units_of_measure] = self.model_responses.apply(
                 lambda r: self.evaluation_metric.get_absolute_error(r['agent_response'], r['correct_answer']), axis=1
             )
+            
+            # self.model_responses[self.units_of_measure] = self.model_responses.apply(
+            #     lambda r: self.evaluation_metric.minmax_normalized_error(r['error'], r['min_label'], r['max_label']), axis=1
+            # )
+            # self.model_responses[self.units_of_measure] = self.model_responses[self.units_of_measure].apply(
+            #     lambda r : abs(r)
+            # )
 
             self.model_responses = self.model_responses.dropna(subset=["minmax_axis_normalized_error"])
-        
-        df_dir = "./single_accuracy_plots"
-        if not os.path.exists(df_dir):
-            os.makedirs(df_dir)
-
-        self.model_responses.to_csv(f"{df_dir}/{self.test_name}_used_df.csv")
+    
+        self.model_responses.to_csv(f"./single_accuracy_plots/{self.test_name}_invalid_included_df.csv")
 
     def bootstrap_ci(
             self, 
             raw_data, 
-            n_iterations=10000,
+            n_iterations=1000, #10000,
             statistic=np.mean,
             agent=None):
         data = raw_data.copy()
@@ -156,7 +176,9 @@ class AccuracyPlot:
         df = data.copy()
 
         def bootstrap_iteration(data, chosen_qs):
+            # data = df.copy() #.sample(frac=1, replace=True, random_state=1)
             filter_df = data[data["question_image"].isin(chosen_qs)] # Filter based on chosen questions
+            # data = data.sample(frac=1, replace=True, random_state=1)
             bs_mean = statistic(filter_df[self.units_of_measure]) 
             return (bs_mean, list(chosen_qs))
 
@@ -203,14 +225,16 @@ class AccuracyPlot:
 
     def create_accuracy_df(self, data, statistic):
         if statistic == np.mean:
-            acc_df = data.groupby(["question", "image_file", "agentType"])[self.units_of_measure].mean()
+            acc_df = data.groupby(["question", "image_file", "agentType", "group_includes"])[self.units_of_measure].mean()
         else:
-            acc_df = data.groupby(["question", "image_file", "agentType"])[self.units_of_measure].median()
+            acc_df = data.groupby(["question", "image_file", "agentType", "group_includes"])[self.units_of_measure].median()
         return acc_df.reset_index()
     
     def create_error_scatter_plot(self):
         model_order = [c[0] for c in self.model_config]
         color_order = [c[1] for c in self.model_config]
+
+        
 
         if self.units_of_measure == "absolute_error":
             self.model_responses = self.model_responses[self.model_responses['absolute_error'] <= 1000000]
@@ -245,6 +269,8 @@ class AccuracyPlot:
         """
         # response_type = unit_of_measurement #if unit_of_measurement == "Proportion Correct" else "err"
         accuracy_df = self.create_accuracy_df(self.model_responses, statistic=statistic)
+        all_human_acc_df = accuracy_df[(accuracy_df['agentType'] == 'Human') & (accuracy_df['group_includes'] != 'all')]
+        accuracy_df = accuracy_df.drop(all_human_acc_df.index)
 
         ytitle = self.units_of_measure if not hide_y_title else None
         model_order = [c['model'] for c in self.model_configs]
@@ -256,37 +282,101 @@ class AccuracyPlot:
             # try:
             #     ci_df = pd.read_csv(f'./ci_df/{self.test_name}.csv')
             # except:
-            ci_df = self.create_confidence_interval_df(self.model_responses, statistic=statistic)
-            ci_df_dir = "./ci_df"
-            if not os.path.exists(ci_df_dir):
-                os.mkdir(ci_df_dir)
+            valid_ci_df = self.create_confidence_interval_df(
+                self.model_responses[
+                    (self.model_responses['group_includes'] == 'valid') &
+                    (self.model_responses['agentType'] != 'Human')
+            ], 
+                statistic=statistic
+            )
+            valid_ci_df['group_includes'] = 'valid'
 
-            ci_df.to_csv(f'{ci_df_dir}/{self.test_name}.csv')
+            all_ci_df = self.create_confidence_interval_df(
+                self.model_responses[
+                    (self.model_responses['group_includes'] == 'all')
+                ], 
+                statistic=statistic
+            )
+            all_ci_df['group_includes'] = 'all'
+
+            ci_df = pd.concat([valid_ci_df, all_ci_df])
+            ci_csv = f'./ci_df/{self.test_name}.csv'
+            print(ci_csv)
+            ci_df.to_csv(ci_csv)
 
             error_bars = alt.Chart(ci_df).mark_errorbar().encode(
                 x=alt.X("agentType:N"),
                 y=alt.Y("ci_upper", title=ytitle),
                 y2=alt.Y2("ci_lower"),
+                xOffset="group_includes:N",
+                # opacity=alt.Opacity("group_includes:N", scale=alt.Scale(domain=['all', 'valid'], range=[0.5, 1])),
                 strokeWidth=alt.value(2),
                 color=alt.Color('agentType', scale=alt.Scale(domain=model_order, range=main_color_order)).legend(None)
             )
 
-            mean_point_plot = alt.Chart(ci_df, title=self.test_name).mark_point(
+            mean_point_plot_filled = alt.Chart(ci_df, title=self.test_name).mark_point(
                 size=40, 
                 filled=True,
                 strokeWidth=1,
                 opacity=1
             ).encode(
-                y=alt.Y("mean:Q",),
+                y=alt.Y("mean:Q", scale=alt.Scale(domain=[0, 1])),
                 x=alt.X("agentType:N", scale=alt.Scale(domain=model_order), title=None),
-                color=alt.value("white")
-                # color=alt.Color(
-                #     'agentType:N', 
-                #     scale=alt.Scale(
-                #         domain=model_order, 
-                #         range=main_color_order
-                #     )
-                # ).legend(None),
+                xOffset="group_includes:N",
+                stroke=alt.Stroke(
+                    'agentType:N', 
+                    scale=alt.Scale(
+                        domain=model_order, 
+                        range=main_color_order
+                    )
+                ).legend(None),
+                color=alt.condition(
+                    alt.datum.group_includes == 'all',
+                    alt.value('white'),  # Use white color if group_includes is 'all'
+                    alt.Color(
+                        'agentType:N', 
+                        scale=alt.Scale(
+                            domain=model_order, 
+                            range=main_color_order
+                        )
+                    )
+                ).legend(None),
+                # opacity=alt.Opacity("group_includes:N", scale=alt.Scale(domain=['all', 'valid'], range=[0, 1])),
+            )
+
+            # mean_point_plot_unfilled = alt.Chart(ci_df, title=self.test_name).mark_point(
+            #     size=40, 
+            #     strokeWidth=1,
+            #     filled=False
+            #     # opacity=1
+            # ).encode(
+            #     y=alt.Y("mean:Q",),
+            #     x=alt.X("agentType:N", scale=alt.Scale(domain=model_order), title=None),
+            #     xOffset="group_includes:N",
+            #     color=alt.Color(
+            #         'agentType:N', 
+            #         scale=alt.Scale(
+            #             domain=model_order, 
+            #             range=main_color_order
+            #         )
+            #     ).legend(None),
+            #     opacity=alt.Opacity("group_includes:N", scale=alt.Scale(domain=['all', 'valid'], range=[1, 0])),
+            # )
+
+            mean_line_plot = alt.Chart(ci_df, title=self.test_name).mark_line(
+                strokeWidth=2,
+                opacity=0.6
+            ).encode(
+                y=alt.Y("mean:Q",scale=alt.Scale(domain=[0, 1])),
+                x=alt.X("agentType:N", scale=alt.Scale(domain=model_order), title=None),
+                xOffset="group_includes:N",
+                color=alt.Color(
+                    'agentType:N', 
+                    scale=alt.Scale(
+                        domain=model_order, 
+                        range=main_color_order
+                    )
+                ).legend(None),
             )
 
         if max_point and render_ci:
@@ -316,8 +406,10 @@ class AccuracyPlot:
         scatter_plot = alt.Chart(accuracy_df, title=self.test_name).mark_circle(size=8,opacity=opacity).encode(
             y=alt.Y(f"{self.units_of_measure}:Q", title=ytitle, scale=alt.Scale(domain=y_domain)),
             x=alt.X("agentType:N", scale=alt.Scale(domain=model_order), title=None),
-            xOffset="jitter:Q",
+            # xOffset="jitter:Q",
+            xOffset="group_includes:N",
             color=alt.Color('agentType:N', scale=alt.Scale(domain=model_order, range=bg_color_order)).legend(None),
+            # opacity="group_includes"
         ).transform_calculate(
             jitter="sqrt(-2*log(random()))*cos(2*PI*random())" 
         )
@@ -335,28 +427,56 @@ class AccuracyPlot:
         #             jitter="sqrt(-2*log(random()))*cos(2*PI*random())" 
         #     )
 
-        final_plot = scatter_plot
+        # final_plot = scatter_plot
         
         if render_ci:
-            final_plot = final_plot + error_bars + mean_point_plot
+            final_plot = error_bars + mean_line_plot + mean_point_plot_filled 
+            # 
         
         return final_plot.resolve_scale(color="independent",  opacity="independent")
 
 def create_single_model_comparison_plots(contrast_dict=None):
     test_types = [
         "ggr",
-        # "vlat",
-        # 'calvi-trick',
+        "vlat",
+        'calvi-trick',
+        # "ggr",
         # "holf",
         # 'calvi-standard',
         # 'holf2',
+        # 'chartqa-test-continuous',
         # 'chartqa-test-continuous-human'
     ]
 
-    model_configs = read_model_configs()
+    model_configs = [
+        {'model': "Salesforce/blip2-flan-t5-xl", 'top_p': 'p06', 'temp': 't1', 'color': '#5ba3cf', 'accent_color': '#8cbedd'},
+        {'model': "Salesforce/blip2-flan-t5-xxl", 'top_p': 'p1', 'temp': 't10', 'color': '#4c78a8', 'accent_color': '#81a0c2'},
+        {'model': "llava-hf/llava-1.5-7b-hf", 'top_p': 'p04', 'temp': 't1', 'color': '#f9b574', 'accent_color': '#facb9d'},
+        {'model': "llava-hf/llava-1.5-13b-hf", 'top_p': 'p1', 'temp': 't04', 'color': '#f58518', 'accent_color': '#f79d46'},
+        {'model': "liuhaotian/llava-v1.6-34b", 'top_p': 'p1', 'temp': 't04', 'color': '#BF9000', 'accent_color': '#F1C232'},
+        {'model': "google/pix2struct-chartqa-base", 'top_p': 'p08', 'temp': 't1', 'color': '#b9a7d0', 'accent_color': '#c7b8d9'},
+        {'model': "google/matcha-chartqa", 'top_p': 'p04', 'temp': 't1', 'color': '#8b6db2', 'accent_color': '#a28ac1'},
+        {'model': "GPT-4V", 'top_p': 'p1', 'temp': 't02', 'color': '#b85536', 'accent_color': '#C6765E'},
+        {'model': "Human", 'top_p': 'pna', 'temp': 'tna', 'color': '#2e693b', 'accent_color': '#73D287'},
+    ]
+
     prompt_type = "indist_instructions_question"
 
+
     for test_type in test_types:
+        # if test_type in ['holf', 'holf2', 'vlat', 'ggr']:
+        #     model_configs = model_configs_models + [
+        #         {'model': "Human/Math-2-1", 'top_p': 'pna', 'temp': 'tna', 'color': '#639460', 'accent_color': '#C8EBC6'},
+        #         {'model': "Human/Math-3", 'top_p': 'pna', 'temp': 'tna', 'color': '#2e693b', 'accent_color': '#73D287'}
+        #     ]
+            
+        # elif test_type in ['calvi-standard', 'calvi-trick',  'chartqa-test-continuous-human']:
+        #     model_configs = model_configs_models + [
+        #         {'model': "Human", 'top_p': 'pna', 'temp': 'tna', 'color': '#2e693b', 'accent_color': '#73D287'}
+        #     ]
+        # else:
+        #     model_configs = model_configs_models
+        
         numerical_tests = ["holf", "holf2", 'chartqa-test-continuous', 'chartqa-test-continuous-human']
         relax_value = 0.00
         accuracy_plot = AccuracyPlot(
@@ -371,7 +491,7 @@ def create_single_model_comparison_plots(contrast_dict=None):
         plot = accuracy_plot.create_error_plot(
             render_ci=True,
             statistic=np.median if test_type in numerical_tests else np.mean
-        ).properties(title=f"{test_type}", height=300, width=125)
+        ).properties(title=f"{test_type}", height=300, width=125) #125
         _dir = f'./single_accuracy_plots/{prompt_type}/{test_type}'
         if not os.path.exists(_dir):
             os.makedirs(_dir)
@@ -380,6 +500,11 @@ def create_single_model_comparison_plots(contrast_dict=None):
         plot.save(file_name)
 
         print(f"Saving plot to {file_name}")
+    # test_plots = alt.vconcat(*test_plots).resolve_scale(
+    #     x='shared'
+    # ).configure_axis(
+    #     labels=False
+    # )
 
 
 if __name__ == "__main__":

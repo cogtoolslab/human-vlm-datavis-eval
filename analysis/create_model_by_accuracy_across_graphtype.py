@@ -223,7 +223,6 @@ class AccuracyPlot:
         Args:
             test (str): name of the test
         """
-        # response_type = unit_of_measurement #if unit_of_measurement == "Proportion Correct" else "err"
         accuracy_df_items = self.create_accuracy_df(self.model_responses, statistic=statistic)
         all_questions = []
         for test_name in ['ggr','vlat','calvi-trick','calvi-standard']:
@@ -233,7 +232,6 @@ class AccuracyPlot:
         all_questions['chart_type'] = all_questions['chart_type'].apply(lambda r : r.lower())
         all_questions['chart_type'] = all_questions['chart_type'].replace({"100 % stacked bar chart": "100% stacked bar chart"})
 
-        # all_questions.me
         all_accuracy_df = pd.merge(all_questions, accuracy_df_items, on=['question', 'image_file'])
         
 
@@ -323,7 +321,6 @@ class AccuracyPlot:
 
                 accuracy_df = accuracy_df[accuracy_df[self.units_of_measure] <= max_point]
                 y_domain = [0, max_point]
-                # y_domain = [0, accuracy_df[self.units_of_measure].max()+1]
             
             if self.units_of_measure == "minmax_axis_normalized_error":
                 opacity = 0.5
@@ -362,16 +359,6 @@ class AccuracyPlot:
         return alt.hconcat(*all_plots)
 
 def create_single_model_comparison_plots(contrast_dict=None):
-    test_types = [
-        # "ggr",
-        # "vlat",
-        'calvi-trick',
-        # "holf",
-        # 'calvi-standard',
-        # 'holf2',
-        # 'chartqa-test-continuous',
-        # 'chartqa-test-continuous-human'
-    ]
 
     model_configs = [
         {'model': "Salesforce/blip2-flan-t5-xl", 'top_p': 'p06', 'temp': 't1', 'color': '#5ba3cf', 'accent_color': '#8cbedd'},
@@ -384,11 +371,8 @@ def create_single_model_comparison_plots(contrast_dict=None):
         {'model': "GPT-4V", 'top_p': 'p1', 'temp': 't02', 'color': '#b85536', 'accent_color': '#C6765E'},
         {'model': "Human", 'top_p': 'pna', 'temp': 'tna', 'color': '#2e693b', 'accent_color': '#73D287'},
     ]
-
     prompt_type = "indist_instructions_question"
 
-    numerical_tests = ["holf", "holf2", 'chartqa-test-continuous', 'chartqa-test-continuous-human']
-    relax_value = 0.00
     accuracy_plot = AccuracyPlot(
         [
             "ggr",
@@ -413,13 +397,6 @@ def create_single_model_comparison_plots(contrast_dict=None):
     plot.save(file_name)
 
     print(f"Saving plot to {file_name}")
-
-    # test_plots = alt.vconcat(*test_plots).resolve_scale(
-    #     x='shared'
-    # ).configure_axis(
-    #     labels=False
-    # )
-
 
 if __name__ == "__main__":
     create_single_model_comparison_plots()

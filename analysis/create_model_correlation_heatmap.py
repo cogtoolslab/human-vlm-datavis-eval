@@ -1,6 +1,6 @@
 import pandas as pd
 import altair as alt
-from utils import read_model_configs, create_all_agent_response_dataframe, find_correct_mc, find_min_max_scaled_error
+from base_utils import read_model_configs, create_all_agent_response_dataframe, find_correct_mc, find_min_max_scaled_error
 import numpy as np
 import math
 
@@ -12,11 +12,9 @@ def prepare_dataframe(test_type):
         model_configs=model_configs,
         print_stats=True
     )
-
-    
-    if test_type in ['ggr', 'vlat', 'calvi-trick']:
+    if test_type in ['ggr', 'vlat', 'calvi-trick', 'calvi-standard']:
         model_responses = find_correct_mc(model_responses_raw=model_responses)
-        model_responses = model_responses.groupby(['agentType', 'question', 'image_file',])['is_correct'].mean().reset_index()
+        model_responses = model_responses.groupby(['agent_type', 'question', 'image_file',])['is_correct'].mean().reset_index()
     else:
         model_responses = find_min_max_scaled_error(
             model_responses_raw=model_responses, 
@@ -24,20 +22,20 @@ def prepare_dataframe(test_type):
             units_of_measure="is_correct"
         )
         model_responses = model_responses.dropna(subset=['is_correct'])
-        model_responses = model_responses.groupby(['agentType', 'question', 'image_file',])['is_correct'].median().reset_index()
+        model_responses = model_responses.groupby(['agent_type', 'question', 'image_file',])['is_correct'].median().reset_index()
 
     # model_responses = model_responses[model_responses['is_correct'] < 1.6]
     # model_responses = model_responses.dropna(subset=['agent_response'])
     
     model_responses = model_responses.sort_values(by=['question', 'image_file'])
     
-    # = model_responses.loc[model_responses.groupby(['agentType', 'question', 'image_file',])['is_correct'].idxmin()]
+    # = model_responses.loc[model_responses.groupby(['agent_type', 'question', 'image_file',])['is_correct'].idxmin()]
 
     return model_responses
 
 def create_correlation_matrix(model_responses,model_configs):
     
-    # agent_vectors = model_responses.groupby('agentType')['is_correct'].apply(list)
+    # agent_vectors = model_responses.groupby('agent_type')['is_correct'].apply(list)
     # items = model_responses[['question', 'image_file']].drop_duplicates()
     # cooks_d = pd.read_csv("./cooks_distance/cooks_distance.csv")
     # cooks_d = cooks_d[cooks_d['cooks_distance'] <= 1]
@@ -54,8 +52,8 @@ def create_correlation_matrix(model_responses,model_configs):
             # ].copy()
             # agents_cooks_d['item'] = agents_cooks_d['question'] + " & " + agents_cooks_d['image_file']
 
-            responses_a = model_responses[model_responses['agentType'] == agent_a]
-            responses_b = model_responses[model_responses['agentType'] == agent_b]
+            responses_a = model_responses[model_responses['agent_type'] == agent_a]
+            responses_b = model_responses[model_responses['agent_type'] == agent_b]
             
 
             responses = responses_a.merge(responses_b, on=['question', 'image_file'],  suffixes=('_a', '_b'))
@@ -139,11 +137,14 @@ def create_pairwise_agent_heatmap(df, response_type, units_of_measure):
 if __name__ == '__main__':
     model_responses = []
     # ['ggr', 'vlat', 'calvi-trick']
-    for test_type in ['ggr', 'vlat', 'calvi-trick']:#['holf', 'chartqa-test-continuous-human']:
+    for test_type in ['ggr', 'vlat', 'calvi-trick', 'calvi-standard']:#['holf', 'chartqa-test-continuous-human']:
         model_response = prepare_dataframe(test_type)
         model_responses.append(model_response)
 
-    model_responses = pd.concat(model_responses)
+    model_responses = pd.concat(model_responses).replace({"calvi-trick": "calvi", "calvi-standard": "calvi"})
+    # model_responses['agent_type'] = model_responses['agent_type'].copy()
+    # model_responses['test_type'] = model_responses['test_type'].copy()
+
     model_responses_file = "./heatmap/model_responses.csv"
     print("MATRIX FILE: ", model_responses_file)
     model_responses.to_csv(model_responses_file)
