@@ -18,8 +18,11 @@ class AccuracyPlot:
         model_configs=[],
         print_stats=False,
         relax_value = 0.10,
+        relax_accuracy_alpha=0.00,
         response_file='processed_extracted_responses'
     ):
+        
+        self.relax_accuracy_alpha = relax_accuracy_alpha
         self.model_configs = model_configs
         self.test_name = testName
         self.AWS_PREFIX = "https://data-visualization-benchmark.s3.us-west-2.amazonaws.com"
@@ -115,6 +118,27 @@ class AccuracyPlot:
             #     lambda r: self.evaluation_metric.a_in_b(r['agent_response'], r['correct_answer']), axis=1
             # )
 
+        if self.units_of_measure == "relaxed_accuracy":
+            def is_within_5_percent(r):
+                actual = abs(r['agent_response'])
+                correct = abs(r['correct_answer'])
+                return int((actual - correct) <= (correct * self.relax_accuracy_alpha))
+                # tolerance = correct * self.relax_accuracy_alpha
+                # return int(correct - tolerance <= actual <= correct + tolerance)
+
+            self.model_responses["agent_response"] = self.model_responses['agent_response'].astype(float)
+            self.model_responses['is_correct'] = self.model_responses.apply(is_within_5_percent, axis=1)
+            # self.model_responses['is_correct'] = self.model_responses.apply(
+            #     # lambda r : int(
+            #     #     abs(r['agent_response']) <= abs(self.relax_accuracy_alpha * r['correct_answer']) or
+            #     #     abs(r['agent_response']) >= abs(self.relax_accuracy_alpha * r['correct_answer'])
+            #     # ),
+            #     axis=1
+            # ) 
+            self.model_responses["a_in_b"] = self.model_responses['is_correct'].copy()
+            self.model_responses[self.units_of_measure] = self.model_responses['is_correct'].copy()
+            self.model_responses['relax_alpha'] = self.relax_accuracy_alpha
+
 
         if self.units_of_measure == "minmax_axis_normalized_error":
             # self.model_responses["agent_response"] = self.model_responses.apply(
@@ -159,13 +183,16 @@ class AccuracyPlot:
             # )
 
             self.model_responses = self.model_responses.dropna(subset=["minmax_axis_normalized_error"])
-    
-        self.model_responses.to_csv(f"./single_accuracy_plots/{self.test_name}_invalid_included_df.csv")
+
+        try:
+            self.model_responses.to_csv(f"./single_accuracy_plots/{self.test_name}_invalid_included_df.csv")
+        except:
+            print()
 
     def bootstrap_ci(
             self, 
             raw_data, 
-            n_iterations=1000, #10000,
+            n_iterations=10, #1000 #10000,
             statistic=np.mean,
             agent=None):
         data = raw_data.copy()
@@ -195,8 +222,10 @@ class AccuracyPlot:
         means = [bs_mean for bs_mean, chosen_qs in qset_means]
 
         if agent:
-            pd.DataFrame({"means": [qset_means], "qs_used": [qs_used], "agent": agent}).to_csv(f"./single_accuracy_plots/{self.test_name}_{agent.replace("/", "_").replace(".", "_")}.csv")
-        
+            try:
+                pd.DataFrame({"means": [qset_means], "qs_used": [qs_used], "agent": agent}).to_csv(f"./single_accuracy_plots/{self.test_name}_{agent.replace("/", "_").replace(".", "_")}.csv")
+            except:
+                print("err")
         # 95% confidence interval
         lower = np.percentile(means, 2.5)
         upper = np.percentile(means, 97.5)
@@ -260,6 +289,132 @@ class AccuracyPlot:
             )
 
         return scatter_plot
+    
+    def create_alpha_plot(self, statistic=np.mean):
+        hide_y_title=False
+        render_ci=True
+        max_point=False
+        accuracy_df = self.create_accuracy_df(self.model_responses, statistic=statistic)
+        all_human_acc_df = accuracy_df[(accuracy_df['agentType'] == 'Human') & (accuracy_df['group_includes'] != 'all')]
+        accuracy_df = accuracy_df.drop(all_human_acc_df.index)
+
+        ytitle = self.units_of_measure if not hide_y_title else None
+        model_order = [c['model'] for c in self.model_configs]
+        main_color_order = [c['color'] for c in self.model_configs]
+        bg_color_order = [c['accent_color'] for c in self.model_configs]
+
+        accuracy_df = self.create_accuracy_df(self.model_responses, statistic=statistic)
+        all_human_acc_df = accuracy_df[(accuracy_df['agentType'] == 'Human') & (accuracy_df['group_includes'] != 'all')]
+        accuracy_df = accuracy_df.drop(all_human_acc_df.index)
+
+        ytitle = self.units_of_measure if not hide_y_title else None
+        model_order = [c['model'] for c in self.model_configs]
+        main_color_order = [c['color'] for c in self.model_configs]
+        bg_color_order = [c['accent_color'] for c in self.model_configs]
+
+        ci_df = []
+        alpha_domain = [a/10 for a in list(range(0,11,1))]
+        for alpha in alpha_domain: #list(range(0,11,1))
+            def is_within_5_percent(r):
+                actual = abs(r['agent_response'])
+                correct = abs(r['correct_answer'])
+                return int((actual - correct) <= (correct * alpha))
+
+            self.model_responses["agent_response"] = self.model_responses['agent_response'].astype(float)
+            self.model_responses['is_correct'] = self.model_responses.apply(is_within_5_percent, axis=1)
+
+            self.model_responses["a_in_b"] = self.model_responses['is_correct'].copy()
+            self.model_responses[self.units_of_measure] = self.model_responses['is_correct'].copy()
+            self.model_responses['relax_alpha'] = alpha
+
+            valid_ci_df = self.create_confidence_interval_df(
+            self.model_responses[
+                (self.model_responses['group_includes'] == 'valid') &
+                (self.model_responses['agentType'] != 'Human')
+            ], statistic=statistic)
+            valid_ci_df['group_includes'] = 'valid'
+
+            all_ci_df = self.create_confidence_interval_df(
+                self.model_responses[
+                    (self.model_responses['group_includes'] == 'all')
+                ], 
+                statistic=statistic
+            )
+            all_ci_df['group_includes'] = 'all'
+
+            ci_df_alpha = pd.concat([valid_ci_df, all_ci_df])
+            ci_df_alpha['alpha'] = alpha
+            ci_df.append(ci_df_alpha)
+            if alpha == 1:
+                pass
+
+        ci_df = pd.concat(ci_df)
+        ci_df = ci_df[
+            (ci_df['group_includes'] != 'all') |
+            (ci_df['agentType'] == 'Human')
+        ]
+
+        # error_bars = alt.Chart(ci_df).mark_errorbar().encode(
+        #     x=alt.X("agentType:N"),
+        #     y=alt.Y("ci_upper", title=ytitle),
+        #     y2=alt.Y2("ci_lower"),
+        #     xOffset="group_includes:N",
+        #     # opacity=alt.Opacity("group_includes:N", scale=alt.Scale(domain=['all', 'valid'], range=[0.5, 1])),
+        #     strokeWidth=alt.value(2),
+        #     color=alt.Color('agentType', scale=alt.Scale(domain=model_order, range=main_color_order)).legend(None)
+        # )
+
+        mean_point_plot_filled = alt.Chart(ci_df, title=self.test_name).mark_point(
+            size=20, 
+            filled=True,
+            strokeWidth=1,
+            opacity=1
+        ).encode(
+            y=alt.Y("mean:Q", scale=alt.Scale(domain=[0, 1])),
+            x=alt.X("alpha:N", scale=alt.Scale(domain=alpha_domain), title=None),
+            # xOffset="group_includes:N",
+            stroke=alt.Stroke(
+                'agentType:N', 
+                scale=alt.Scale(
+                    domain=model_order, 
+                    range=main_color_order
+                )
+            ).legend(None),
+            color=alt.condition(
+                alt.datum.group_includes == 'all',
+                alt.value('white'),  # Use white color if group_includes is 'all'
+                alt.Color(
+                    'agentType:N', 
+                    scale=alt.Scale(
+                        domain=model_order, 
+                        range=main_color_order
+                    )
+                )
+            ).legend(None),
+        )
+
+        mean_line_plot = alt.Chart(ci_df, title=self.test_name).mark_line(
+            strokeWidth=2,
+            opacity=0.6
+        ).encode(
+            y=alt.Y("mean:Q",scale=alt.Scale(domain=[0, 1])),
+            x=alt.X("alpha:N", scale=alt.Scale(domain=alpha_domain), title=None),
+            # xOffset="group_includes:N",
+            color=alt.Color(
+                'agentType:N', 
+                scale=alt.Scale(
+                    domain=model_order, 
+                    range=main_color_order
+                )
+            ).legend(None),
+        )
+        
+        if render_ci:
+            final_plot = mean_line_plot + mean_point_plot_filled 
+        
+        return final_plot.resolve_scale(color="independent",  opacity="independent")
+
+
 
     def create_error_plot(self, hide_y_title=False, render_ci=True, max_point=False, statistic=np.mean):
         """ Creates a scatter plot with error bars for accuracy data.
@@ -302,7 +457,10 @@ class AccuracyPlot:
             ci_df = pd.concat([valid_ci_df, all_ci_df])
             ci_csv = f'./ci_df/{self.test_name}.csv'
             print(ci_csv)
-            ci_df.to_csv(ci_csv)
+            try:
+                ci_df.to_csv(ci_csv)
+            except:
+                print("err")
 
             error_bars = alt.Chart(ci_df).mark_errorbar().encode(
                 x=alt.X("agentType:N"),
@@ -388,7 +546,7 @@ class AccuracyPlot:
                 color=alt.value("#2b2b2b") #alt.Color('agentType', scale=alt.Scale(domain=order, range=color_arr)).legend(None)
             )
 
-        if self.units_of_measure == "a_in_b":
+        if self.units_of_measure == "a_in_b" or self.units_of_measure == "relaxed_accuracy":
             y_domain = [0, 1]
         elif self.units_of_measure == "minmax_axis_normalized_error":
             max_point = ci_df["ci_upper"].max()
@@ -437,15 +595,15 @@ class AccuracyPlot:
 
 def create_single_model_comparison_plots(contrast_dict=None):
     test_types = [
-        "ggr",
-        "vlat",
-        'calvi-trick',
+        # "ggr",
+        # "vlat",
+        # 'calvi-trick',
         # "ggr",
         # "holf",
         # 'calvi-standard',
         # 'holf2',
         # 'chartqa-test-continuous',
-        # 'chartqa-test-continuous-human'
+        'chartqa-test-continuous-human'
     ]
 
     model_configs = [
@@ -483,23 +641,35 @@ def create_single_model_comparison_plots(contrast_dict=None):
             test_type, 
             prompt_type,
             model_configs=model_configs,
-            units_of_measure='minmax_axis_normalized_error' if test_type in numerical_tests else 'a_in_b',
+            # units_of_measure='minmax_axis_normalized_error' if test_type in numerical_tests else 'a_in_b',
+            units_of_measure='relaxed_accuracy',
             print_stats=True,
             relax_value=relax_value
         )
                     
         plot = accuracy_plot.create_error_plot(
             render_ci=True,
-            statistic=np.median if test_type in numerical_tests else np.mean
+            statistic=np.mean, #np.median if test_type in numerical_tests else np.mean
         ).properties(title=f"{test_type}", height=300, width=125) #125
         _dir = f'./single_accuracy_plots/{prompt_type}/{test_type}'
         if not os.path.exists(_dir):
             os.makedirs(_dir)
 
-        file_name = f"{_dir}/accuracy_plot_med_p00-3.pdf"
+        file_name = f"{_dir}/accuracy_plot_invalid_inc.pdf"
         plot.save(file_name)
 
         print(f"Saving plot to {file_name}")
+
+
+        alpha_plot = accuracy_plot.create_alpha_plot().properties(title=f"{test_type}", height=300, width=125)
+        _dir = f'./single_accuracy_plots/alpha_plots/{test_type}'
+        if not os.path.exists(_dir):
+            os.makedirs(_dir)
+
+        file_name = f"{_dir}/accuracy_plot_invalid_inc.pdf"
+        alpha_plot.save(file_name)
+        print(f"Saving alpha plot to {file_name}")
+
     # test_plots = alt.vconcat(*test_plots).resolve_scale(
     #     x='shared'
     # ).configure_axis(

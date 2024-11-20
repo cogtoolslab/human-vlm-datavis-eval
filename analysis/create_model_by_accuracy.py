@@ -18,6 +18,7 @@ class AccuracyPlot:
         model_configs=[],
         print_stats=False,
         relax_value = 0.10,
+        relax_accuracy_alpha=0.10,
         response_file='processed_extracted_responses'
     ):
         self.model_configs = model_configs
@@ -31,6 +32,7 @@ class AccuracyPlot:
         
         self.evaluation_metric = EvaluationMetrics()
         self.units_of_measure = units_of_measure
+        self.relax_accuracy_alpha = relax_accuracy_alpha
 
         self.model_responses = []
         for model_config in model_configs:
@@ -109,9 +111,16 @@ class AccuracyPlot:
                 check_answer, axis=1
             )
 
-            # self.model_responses["a_in_b"] = self.model_responses.apply(
-            #     lambda r: self.evaluation_metric.a_in_b(r['agent_response'], r['correct_answer']), axis=1
-            # )
+        if self.units_of_measure == "relaxed_accuracy":
+            self.model_responses["agent_response"] = self.model_responses['agent_response'].astype(float)
+            self.model_responses['is_correct'] = self.model_responses.apply(
+                lambda r : int(abs(r['agent_response'] - r['correct_answer']) < (self.relax_accuracy_alpha * r['correct_answer'])),
+                axis=1
+            ) 
+            self.model_responses["a_in_b"] = self.model_responses['is_correct'].copy()
+            self.model_responses[self.units_of_measure] = self.model_responses['is_correct'].copy()
+            self.model_responses['relax_alpha'] = self.relax_accuracy_alpha
+            
 
 
         if self.units_of_measure == "minmax_axis_normalized_error":
@@ -284,7 +293,7 @@ class AccuracyPlot:
         ci_df = self.create_confidence_interval_df(self.model_responses, statistic=statistic)
         ci_df.to_csv(f'./ci_df/{self.test_name}.csv')
 
-        if self.units_of_measure == "a_in_b":
+        if self.units_of_measure == "a_in_b" or self.units_of_measure == "relaxed_accuracy":
             y_domain = [0, 1]
         elif self.units_of_measure == "minmax_axis_normalized_error":
             max_point = ci_df["ci_upper"].max()
@@ -421,7 +430,8 @@ def create_single_model_comparison_plots(contrast_dict=None):
             test_type, 
             prompt_type,
             model_configs=model_configs,
-            units_of_measure='minmax_axis_normalized_error' if test_type in numerical_tests else 'a_in_b',
+            # units_of_measure='minmax_axis_normalized_error' if test_type in numerical_tests else 'a_in_b',
+            units_of_measure='relaxed_accuracy',
             print_stats=True,
             relax_value=relax_value
         )
