@@ -51,7 +51,7 @@ def minmax_normalized_error(response_error, group_min, group_max):
 def get_absolute_error(numerical_answer : float, correct_numerical_answer : float):
     return abs(numerical_answer - correct_numerical_answer) 
 
-def find_min_max_scaled_error(model_responses_raw, test_name, units_of_measure):
+def find_min_max_scaled_error(model_responses_raw, test_name, units_of_measure, dropna=True):
     model_responses = model_responses_raw.copy()
     model_responses["agent_response"] = model_responses["agent_response"].astype(float)
     AWS_PREFIX = "https://data-visualization-benchmark.s3.us-west-2.amazonaws.com"
@@ -68,7 +68,31 @@ def find_min_max_scaled_error(model_responses_raw, test_name, units_of_measure):
     model_responses[units_of_measure] = model_responses.apply(
         lambda r: get_absolute_error(r['agent_response'], r['correct_answer']), axis=1
     )
-    model_responses = model_responses.dropna(subset=[units_of_measure])
+    if dropna:
+        model_responses = model_responses.dropna(subset=[units_of_measure])
+    return model_responses
+
+def get_relaxed_accuracy(agent_response, correct_answer, relax_accuracy_alpha):
+    actual = abs(agent_response)
+    correct = abs(correct_answer)
+    return int((actual - correct) <= (correct * relax_accuracy_alpha))
+
+def find_relaxed_accuracy(model_responses_raw, test_name, units_of_measure, relax_acc_alpha=0, dropna=True):
+    model_responses = model_responses_raw.copy()
+    model_responses["agent_response"] = model_responses["agent_response"].astype(float)
+    AWS_PREFIX = "https://data-visualization-benchmark.s3.us-west-2.amazonaws.com"
+    questions = pd.read_csv(f'{AWS_PREFIX}/{test_name}/questions.csv')
+
+    merged_response = questions[["question", "image_file"]]
+    model_responses = model_responses.merge(merged_response, on=["question", "image_file"])
+  
+    model_responses[units_of_measure] = model_responses.apply(
+        lambda r: get_relaxed_accuracy(r['agent_response'], r['correct_answer'], relax_acc_alpha), axis=1
+    )
+
+    if dropna:
+        model_responses = model_responses.dropna(subset=[units_of_measure])
+
     return model_responses
 
 
@@ -134,16 +158,18 @@ def create_all_agent_response_dataframe(
 
         model_responses.append(model_response)
 
-    if model == "Human":
-        pass
     model_responses = pd.concat(model_responses).reset_index(drop=True)
+    # print(len(model_responses[['question', 'image_file']].drop_duplicates()), 
+    #     len(model_responses[model_responses['agent_type'] != 'Human']),
+    #     len(model_responses[model_responses['agent_type'] != 'Human'].dropna()),
+    #     model_responses[model_responses.isnull()].head()
+    # )
+
     model_responses = model_responses.drop(['correct_answer'], axis=1)
     model_responses = model_responses.merge(questions[['image_file','question','correct_answer']])
+
     if dropna:
         model_responses = model_responses.dropna(subset=["agent_response"])
-
-    if model == "Human":
-        pass
 
     if print_stats:
         print(model_response_url)
@@ -160,7 +186,7 @@ def create_all_agent_response_dataframe(
 
     return model_responses[cols]
 
-def prepare_original_raw_response_dataframe(test_type):
+def prepare_original_raw_response_dataframe(test_type, dropna=True):
     """
     Prepare dataframe for raw responses
     """
@@ -169,54 +195,85 @@ def prepare_original_raw_response_dataframe(test_type):
         test_name=test_type, 
         model_configs=model_configs,
         print_stats=False,
-        response_file="raw_model_responses"
+        response_file="raw_model_responses",
+        dropna=dropna
     )
     model_responses = model_responses.sort_values(by=['question', 'image_file'])
     return model_responses
 
-def prepare_dataframe(test_type):
+def prepare_dataframe(test_type, relax_acc=False, relax_acc_alpha = 0, dropna=True):
     model_configs = read_model_configs()
     model_responses = create_all_agent_response_dataframe(
         test_name=test_type, 
         model_configs=model_configs,
-        print_stats=False
+        print_stats=False,
+        dropna=dropna
     )
 
     if test_type in ['ggr', 'vlat', 'calvi-trick', 'calvi-standard']:
         model_responses = find_correct_mc(model_responses_raw=model_responses)
         model_responses = model_responses.groupby(['agent_type', 'question', 'image_file',])['is_correct'].mean().reset_index()
     else:
-        model_responses = find_min_max_scaled_error(
-            model_responses_raw=model_responses, 
-            test_name=test_type,
-            units_of_measure="is_correct"
-        )
-        model_responses = model_responses.dropna(subset=['is_correct'])
-        model_responses = model_responses.groupby(['agent_type', 'question', 'image_file',])['is_correct'].median().reset_index()
+        if not relax_acc:
+            model_responses = find_min_max_scaled_error(
+                model_responses_raw=model_responses, 
+                test_name=test_type,
+                units_of_measure="is_correct"
+            )
+            model_responses = model_responses.dropna(subset=['is_correct'])
+            model_responses = model_responses.groupby(['agent_type', 'question', 'image_file',])['is_correct'].median().reset_index()
+        else:
+            model_responses = find_relaxed_accuracy(
+                model_responses_raw=model_responses, 
+                test_name=test_type,
+                units_of_measure="is_correct",
+                relax_acc_alpha = relax_acc_alpha
+            )
+            model_responses = model_responses.dropna(subset=['is_correct'])
+            model_responses = model_responses.groupby(['agent_type', 'question', 'image_file',])['is_correct'].mean().reset_index()
     
     model_responses = model_responses.sort_values(by=['question', 'image_file'])
 
     return model_responses
 
-def prepare_response_dataframe(test_type):
+def prepare_response_dataframe(test_type, relax_acc=False, relax_acc_alpha=0, dropna=True):
     model_configs = read_model_configs()
     model_responses = create_all_agent_response_dataframe(
         test_name=test_type, 
         model_configs=model_configs,
-        print_stats=False
+        print_stats=False,
+        dropna=dropna
     )
+    print(len(model_responses[['question', 'image_file']].drop_duplicates()), 
+          len(model_responses[model_responses['agent_type'] != 'Human']),
+          len(model_responses[model_responses['agent_type'] != 'Human'].dropna()),
+        #   model_responses[model_responses.isnull()].head()
+          )
 
     if test_type in ['ggr', 'vlat', 'calvi-trick', 'calvi-standard']:
         model_responses = find_correct_mc(model_responses_raw=model_responses)
     else:
-        model_responses = find_min_max_scaled_error(
-            model_responses_raw=model_responses, 
-            test_name=test_type,
-            units_of_measure="is_correct"
-        )
-        model_responses = model_responses.dropna(subset=['is_correct'])
+        if not relax_acc:
+            model_responses = find_min_max_scaled_error(
+                model_responses_raw=model_responses, 
+                test_name=test_type,
+                units_of_measure="is_correct",
+                dropna=dropna
+            )
+        else:
+            model_responses = find_relaxed_accuracy(
+                model_responses_raw=model_responses, 
+                test_name=test_type,
+                units_of_measure="is_correct",
+                relax_acc_alpha = relax_acc_alpha,
+                dropna=dropna
+            )
+        
+        if dropna:
+            model_responses = model_responses.dropna(subset=['is_correct'])
     
     model_responses = model_responses.sort_values(by=['question', 'image_file'])
+
 
     return model_responses
 
@@ -236,8 +293,16 @@ if __name__ == "__main__":
     #     ['question', 'image_file', 'agent_type', 'test_type', 'agent_response']
     # ].value_counts().reset_index()
 
-    model_responses = []
-    for test_type in ['vlat', 'calvi-trick', 'calvi-standard', 'ggr']:
-        model_response = prepare_dataframe(test_type)
-        model_response['test_type'] = test_type
-        model_responses.append(model_response)
+    # na_df = prepare_response_dataframe("ggr", relax_acc=True, relax_acc_alpha=0, dropna=True)
+
+    print("no na")
+    nonna_df = na_df = prepare_response_dataframe("ggr", relax_acc=True, relax_acc_alpha=0, dropna=False)
+
+    # print(len(na_df), len(nonna_df), len(nonna_df['is_correct'].dropna()), len(nonna_df.isnull()))
+    # print(nonna_df[nonna_df.isnull()].head())
+
+    # model_responses = []
+    # for test_type in ['vlat', 'calvi-trick', 'calvi-standard', 'ggr']:
+    #     model_response = prepare_dataframe(test_type)
+    #     model_response['test_type'] = test_type
+    #     model_responses.append(model_response)
