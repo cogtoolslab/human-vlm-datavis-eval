@@ -1,4 +1,15 @@
 import pandas as pd
+from typing import List, Dict, Literal
+
+IData: List[Dict[str, str]] = [
+    {
+        'model': str,
+        'top_p': Literal["p06", "p1", "p04", "p08", "pna"],
+        'temp': Literal["t1", "t10", "t04", "t02", "tna"],
+        'color': str,
+        'accent_color': str
+    }
+]
 
 def read_model_configs():
     model_configs = [
