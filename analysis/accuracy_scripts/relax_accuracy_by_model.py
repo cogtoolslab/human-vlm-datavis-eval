@@ -87,9 +87,6 @@ def create_acc_plot(
             lambda r: get_relaxed_accuracy(r['agent_response'], r['correct_answer'], relax_accuracy_alpha), 
             axis=1
         )
-        relaxed_accuracy_df.groupby('item_id').apply(
-            
-        )
 
         agg_data = relaxed_accuracy_df.groupby(['agent_type']).agg(
             mean_prop=(measure, 'mean')
