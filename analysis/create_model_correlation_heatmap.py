@@ -3,6 +3,8 @@ import altair as alt
 from base_utils import read_model_configs, create_all_agent_response_dataframe, find_correct_mc, find_min_max_scaled_error
 import numpy as np
 import math
+from base_utils import get_relaxed_accuracy
+
 
 
 def prepare_dataframe(test_type):
@@ -16,12 +18,16 @@ def prepare_dataframe(test_type):
         model_responses = find_correct_mc(model_responses_raw=model_responses)
         model_responses = model_responses.groupby(['agent_type', 'question', 'image_file',])['is_correct'].mean().reset_index()
     else:
-        model_responses = find_min_max_scaled_error(
-            model_responses_raw=model_responses, 
-            test_name=test_type,
-            units_of_measure="is_correct"
+        # model_responses = find_min_max_scaled_error(
+        #     model_responses_raw=model_responses, 
+        #     test_name=test_type,
+        #     units_of_measure="is_correct"
+        # )
+        # model_responses = model_responses.dropna(subset=['is_correct'])
+        model_responses['is_correct'] = model_responses.apply(
+            lambda r : get_relaxed_accuracy(r["agent_response"], r["correct_answer"], 0.05),
+            axis=1
         )
-        model_responses = model_responses.dropna(subset=['is_correct'])
         model_responses = model_responses.groupby(['agent_type', 'question', 'image_file',])['is_correct'].median().reset_index()
 
     # model_responses = model_responses[model_responses['is_correct'] < 1.6]
@@ -137,7 +143,8 @@ def create_pairwise_agent_heatmap(df, response_type, units_of_measure):
 if __name__ == '__main__':
     model_responses = []
     # ['ggr', 'vlat', 'calvi-trick']
-    for test_type in ['ggr', 'vlat', 'calvi-trick', 'calvi-standard']:#['holf', 'chartqa-test-continuous-human']:
+    # for test_type in ['ggr', 'vlat', 'calvi-trick', 'calvi-standard']:#['holf', 'chartqa-test-continuous-human']:
+    for test_type in ['holf', 'holf2',]:
         model_response = prepare_dataframe(test_type)
         model_responses.append(model_response)
 
