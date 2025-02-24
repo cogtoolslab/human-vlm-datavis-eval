@@ -24,7 +24,9 @@ def bootstrap_ci(
     df = data.copy()
 
     def bootstrap_iteration(data, chosen_items):
-        filter_df = data[data[id_col].isin(chosen_items)] # Filter based on chosen questions
+        filter_df = pd.concat(
+            [data[data['item_id'] == item] for item in chosen_items]
+        )
         bs_mean = statistic(filter_df[measure]) 
         return (bs_mean, list(chosen_items))
 

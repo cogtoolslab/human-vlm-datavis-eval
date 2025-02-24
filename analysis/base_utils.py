@@ -295,8 +295,7 @@ if __name__ == "__main__":
 
     # na_df = prepare_response_dataframe("ggr", relax_acc=True, relax_acc_alpha=0, dropna=True)
 
-    print("no na")
-    nonna_df = na_df = prepare_response_dataframe("ggr", relax_acc=True, relax_acc_alpha=0, dropna=False)
+    nonna_df = na_df = prepare_response_dataframe("chartqa-test-continuous-human", relax_acc=True, relax_acc_alpha=0, dropna=False)
 
     # print(len(na_df), len(nonna_df), len(nonna_df['is_correct'].dropna()), len(nonna_df.isnull()))
     # print(nonna_df[nonna_df.isnull()].head())
