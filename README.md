@@ -31,6 +31,7 @@ Each folder contains a README.md file that elaborates further on its contents. B
 - `human_machine_performance.ipynb`: Human and machine performance figure
 - `feature_pairwise_performance.ipynb`: Pairwise comparison between human and machien eprformacne
 - `human_machine_correlation.ipynb`: Human vs machine correlation figure
+- `process_valid_model_responses.ipynb`: process and extract responses from GPT-4 processed responses
 
 `data` contains instructions on how to download the data model and human responses to all items.
 

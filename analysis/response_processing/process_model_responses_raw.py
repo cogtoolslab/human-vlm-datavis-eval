@@ -239,14 +239,14 @@ if __name__ == "__main__":
     response_count_per_question = 10
     test_types = [
         # "ggr",
-         "vlat",
+        #  "vlat",
         #  "holf",
         # "calvi",
         #  'calvi-trick', 
         #  'calvi-standard', 
         #  'holf2',
         # # 'chartqa-test-continuous',
-        # 'chartqa-test-continuous-human',
+        'chartqa-test-continuous-human',
     ]
     # model_configs = read_model_configs()
     model_configs = read_all_model_configs(models=['ahmed-masry/chartgemma', 'meta-llama/Llama-3.2-11B-Vision', 'meta-llama/Llama-3.2-11B-Vision-Instruct', 'Xkev/Llama-3.2V-11B-cot', ])
