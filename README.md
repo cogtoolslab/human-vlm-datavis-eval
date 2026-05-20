@@ -1,6 +1,6 @@
-# CHART-6: Human-Centered Evaluation of Data Visualization Understanding in Vision-Language Models
+# Human-Centered Evaluation of Data Visualization Understanding in Vision-Language Models
 
-This repository contains code to reproduce the results in our XXXX paper, CHART-6: Human-Centered Evaluation of Data Visualization Understanding in Vision-Language Models.
+This repository contains code to reproduce the results in our XXXX paper, Human-Centered Evaluation of Data Visualization Understanding in Vision-Language Models.
 
 To reproduce the results in the CogSci 2024 version of this project: [*Evaluating human and machine understanding of data visualizations*](/paper/vlm_datavis_benchmark_corrected_cogsci2024.pdf), please visit https://github.com/cogtoolslab/human-machine-datavis-cogsci/tree/master.
 
